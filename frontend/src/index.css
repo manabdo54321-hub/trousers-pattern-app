@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ضبط الخط العربي على مستوى التطبيق كله، واتجاه RTL مضبوط من index.html مسبقاً */
+body {
+  font-family: 'Cairo', 'Tajawal', sans-serif;
+  margin: 0;
+  overflow: hidden; /* لمنع ظهور scrollbars غير مرغوبة حول منطقة الكانفاس الكاملة */
+}
+
+/* عنصر الكانفاس نفسه يجب أن يبقى LTR داخلياً (إحداثيات x,y رياضية عادية)
+   حتى لو كانت الواجهة المحيطة به RTL، لمنع أي التباس في حسابات الإزاحة */
+.canvas-container-ltr {
+  direction: ltr;
+}

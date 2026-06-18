@@ -1,0 +1,20 @@
+# Python (الباك إند)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Node (الفرونت إند)
+node_modules/
+dist/
+.vite/
+
+# ملفات بيئة محلية (لا يجب رفعها لأنها قد تحتوي أسراراً)
+.env
+.env.local
+
+# ملفات نظام التشغيل
+.DS_Store
+Thumbs.db
