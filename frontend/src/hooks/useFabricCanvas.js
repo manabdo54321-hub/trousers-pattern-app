@@ -1,29 +1,10 @@
-/**
- * useFabricCanvas.js
- * ------------------
- * هذا الـ hook مسؤول حصرياً عن "دورة حياة" fabric.Canvas: إنشاؤه مرة
- * واحدة عند تحميل المكوّن، وتدميره (dispose) عند إلغاء التحميل، وربط
- * أحداث الـ Pan (بالماوس) والـ Zoom (بعجلة الماوس) به.
- *
- * فصل هذا المنطق عن CanvasArea.jsx يحل مشكلة شائعة جداً عند دمج
- * مكتبات canvas خارجية مع React: لو وضعنا new fabric.Canvas() مباشرة
- * داخل useEffect في المكوّن الرئيسي بدون عناية، أي إعادة render
- * (re-render) قد يعيد إنشاء الكانفاس من الصفر ويفقد كل الحالة
- * (موضع الزووم، القطع المسحوبة). هنا نضمن أن "إنشاء الكانفاس" يحدث
- * مرة واحدة فقط طوال عمر المكوّن (dependency array فاضية []).
- */
-
 import { useEffect, useRef } from 'react'
 import * as fabric from 'fabric'
 import { usePatternStore } from '../store/patternStore'
 import { ZOOM_MIN, ZOOM_MAX } from '../utils/constants'
 
 export function useFabricCanvas(canvasElementRef) {
-  // fabricCanvasRef يحمل الـ instance الفعلي طوال عمر المكوّن،
-  // ونستخدم useRef بدل useState لأن تغييره لا يجب أن يسبب re-render
-  // (Fabric.js يدير رسمه الداخلي بنفسه عبر render loop خاص به)
   const fabricCanvasRef = useRef(null)
-
   const setZoom = usePatternStore((state) => state.setZoom)
   const setPan = usePatternStore((state) => state.setPan)
 
@@ -32,16 +13,14 @@ export function useFabricCanvas(canvasElementRef) {
 
     const canvas = new fabric.Canvas(canvasElementRef.current, {
       backgroundColor: '#f8f9fa',
-      selection: false, // نمنع التحديد المتعدد بالمستطيل، لأن قطعنا تُسحب فردياً فقط
+      selection: false,
       preserveObjectStacking: true,
+      allowTouchScrolling: false,
     })
     fabricCanvasRef.current = canvas
 
-    // ---------------------------------------------------
-    // ضبط حجم الكانفاس ليطابق حجم العنصر الأب (responsive)
-    // ---------------------------------------------------
     function resizeCanvas() {
-      const container = canvasElementRef.current.parentElement
+      const container = canvasElementRef.current?.parentElement
       if (!container) return
       canvas.setWidth(container.clientWidth)
       canvas.setHeight(container.clientHeight)
@@ -50,70 +29,41 @@ export function useFabricCanvas(canvasElementRef) {
     resizeCanvas()
     window.addEventListener('resize', resizeCanvas)
 
-    // ---------------------------------------------------
-    // التكبير/التصغير بعجلة الماوس (Zoom)
-    // المبدأ: Fabric.js يدعم "viewportTransform" وهو مصفوفة تحويل
-    // تُطبَّق على كل المحتوى دفعة واحدة، فلا نحتاج لإعادة حساب موضع
-    // كل نقطة من نقاط الباترون يدوياً عند الزووم — هذا يحافظ على
-    // المقياس الحقيقي (real-world scale) للأبعاد بدقة 100%، لأن
-    // البيانات بالسنتيمتر تبقى ثابتة ولا تُعاد كتابتها أبداً، فقط
-    // "كاميرا" العرض هي التي تتحرك وتتكبّر.
-    // ---------------------------------------------------
+    // Zoom بعجلة الماوس
     canvas.on('mouse:wheel', (opt) => {
       const delta = opt.e.deltaY
       let zoom = canvas.getZoom()
       zoom *= 0.999 ** delta
-      if (zoom > ZOOM_MAX) zoom = ZOOM_MAX
-      if (zoom < ZOOM_MIN) zoom = ZOOM_MIN
-
-      // التكبير حول نقطة الماوس (zoomToPoint) وليس حول مركز الشاشة،
-      // وهذا هو السلوك المتوقع في برامج CAD الاحترافية: الجزء الذي
-      // يشير إليه المستخدم هو الذي يبقى ثابتاً بصرياً أثناء التكبير.
-      const pointer = canvas.getPointer(opt.e)
+      zoom = Math.min(Math.max(zoom, ZOOM_MIN), ZOOM_MAX)
       canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom)
-
       setZoom(zoom)
       const vpt = canvas.viewportTransform
       setPan(vpt[4], vpt[5])
-
       opt.e.preventDefault()
       opt.e.stopPropagation()
     })
 
-    // ---------------------------------------------------
-    // التحريك (Pan) بالسحب على فضاء الكانفاس الفارغ
-    // نفعّله فقط عند الضغط على المسافة الفاضية (ليس على قطعة)، حتى لا
-    // يتعارض مع سحب القطع نفسها (Manual Nesting بالسحب)
-    // ---------------------------------------------------
+    // Pan بالماوس (على الخلفية فقط)
     let isPanning = false
-    let lastPosX = 0
-    let lastPosY = 0
+    let lastPosX = 0, lastPosY = 0
 
     canvas.on('mouse:down', (opt) => {
-      const evt = opt.e
-      // نبدأ الـ pan فقط إذا لم يكن المستخدم قد ضغط على شكل (target)،
-      // أي ضغط على الخلفية الفارغة فقط
       if (!opt.target) {
         isPanning = true
-        canvas.selection = false
-        lastPosX = evt.clientX
-        lastPosY = evt.clientY
+        lastPosX = opt.e.clientX
+        lastPosY = opt.e.clientY
         canvas.setCursor('grabbing')
       }
     })
-
     canvas.on('mouse:move', (opt) => {
-      if (isPanning) {
-        const evt = opt.e
-        const vpt = canvas.viewportTransform
-        vpt[4] += evt.clientX - lastPosX
-        vpt[5] += evt.clientY - lastPosY
-        canvas.requestRenderAll()
-        lastPosX = evt.clientX
-        lastPosY = evt.clientY
-      }
+      if (!isPanning) return
+      const vpt = canvas.viewportTransform
+      vpt[4] += opt.e.clientX - lastPosX
+      vpt[5] += opt.e.clientY - lastPosY
+      canvas.requestRenderAll()
+      lastPosX = opt.e.clientX
+      lastPosY = opt.e.clientY
     })
-
     canvas.on('mouse:up', () => {
       isPanning = false
       canvas.setCursor('default')
@@ -121,17 +71,79 @@ export function useFabricCanvas(canvasElementRef) {
       setPan(vpt[4], vpt[5])
     })
 
-    // ---------------------------------------------------
-    // التنظيف: تدمير الكانفاس عند إلغاء تحميل المكوّن (مهم جداً لمنع
-    // تسريب الذاكرة وتراكم event listeners عبر إعادة التحميلات المتكررة
-    // في بيئة React StrictMode)
-    // ---------------------------------------------------
+    // دعم اللمس (Touch) للموبايل
+    let lastTouchDist = null
+    let lastTouchX = null
+    let lastTouchY = null
+    let touchTarget = null
+
+    const el = canvas.upperCanvasEl
+
+    el.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        const touch = e.touches[0]
+        const rect = el.getBoundingClientRect()
+        const x = touch.clientX - rect.left
+        const y = touch.clientY - rect.top
+        touchTarget = canvas.findTarget({ clientX: touch.clientX, clientY: touch.clientY })
+        lastTouchX = touch.clientX
+        lastTouchY = touch.clientY
+        lastTouchDist = null
+      } else if (e.touches.length === 2) {
+        touchTarget = null
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        lastTouchDist = Math.hypot(dx, dy)
+        lastTouchX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+      }
+      e.preventDefault()
+    }, { passive: false })
+
+    el.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && !touchTarget) {
+        // Pan باصبع واحد على الخلفية
+        const touch = e.touches[0]
+        const vpt = canvas.viewportTransform
+        vpt[4] += touch.clientX - lastTouchX
+        vpt[5] += touch.clientY - lastTouchY
+        canvas.requestRenderAll()
+        lastTouchX = touch.clientX
+        lastTouchY = touch.clientY
+      } else if (e.touches.length === 2) {
+        // Pinch to zoom بإصبعين
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        const dist = Math.hypot(dx, dy)
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+        const rect = el.getBoundingClientRect()
+
+        if (lastTouchDist) {
+          let zoom = canvas.getZoom() * (dist / lastTouchDist)
+          zoom = Math.min(Math.max(zoom, ZOOM_MIN), ZOOM_MAX)
+          canvas.zoomToPoint({ x: midX - rect.left, y: midY - rect.top }, zoom)
+          setZoom(zoom)
+        }
+        lastTouchDist = dist
+        lastTouchX = midX
+        lastTouchY = midY
+      }
+      e.preventDefault()
+    }, { passive: false })
+
+    el.addEventListener('touchend', () => {
+      lastTouchDist = null
+      touchTarget = null
+      const vpt = canvas.viewportTransform
+      setPan(vpt[4], vpt[5])
+    }, { passive: true })
+
     return () => {
       window.removeEventListener('resize', resizeCanvas)
       canvas.dispose()
       fabricCanvasRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return fabricCanvasRef
